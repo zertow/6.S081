@@ -1,0 +1,17 @@
+{
+    "configurations": [
+        {
+            "name": "Linux",
+            "includePath": [
+                "${workspaceFolder}/**",
+                "${workspaceFolder}/user/**"
+            ],
+            "defines": [],
+            "compilerPath": "/usr/bin/riscv64-linux-gnu-gcc",
+            "cStandard": "c11",
+            // "cppStandard": "c++14",
+            "intelliSenseMode": "linux-gcc-x64"
+        }
+    ],
+    "version": 4
+}
