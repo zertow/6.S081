@@ -19,14 +19,17 @@ main (int argc, char *argv[])
   count = read (0, buf, 32);
   buf[count] = 0;
   arg[arg_p++] = buf;
+
   for (i = 0; i < count; i++) {
     //分割字符串
-    if (buf[i] == ' ') {
+    if (buf[i] == ' ' || buf[i] == '\n') {
       buf[i] = 0;
       arg[arg_p++] = buf + i + 1;
     }
   }
-
+  // for (i = 0; i < arg_p; i++) {
+  //   printf ("arg: %s\n", arg[i]);
+  // }
   if (fork () == 0) {
     exec (argv[1], arg);
     exit (0);
