@@ -13,7 +13,7 @@ extern char trampoline[], uservec[], userret[];
 
 // in kernelvec.S, calls kerneltrap().
 void kernelvec();
-
+void alarmtrapret(uint64 func_addr);
 extern int devintr();
 
 void
@@ -29,6 +29,7 @@ trapinithart(void)
   w_stvec((uint64)kernelvec);
 }
 
+enum {ALARM_IDLE,ALARM_WORKING,ALARM_RETURN};
 //
 // handle an interrupt, exception, or system call from user space.
 // called from trampoline.S
@@ -49,7 +50,7 @@ usertrap(void)
   
   // save user program counter.
   p->trapframe->epc = r_sepc();
-  
+
   if(r_scause() == 8){
     // system call
 
@@ -65,8 +66,17 @@ usertrap(void)
     intr_on();
 
     syscall();
-  } else if((which_dev = devintr()) != 0){
+  } else if((which_dev = devintr()) ==2){
     // ok
+    if(p->alarm_total_tick !=0){
+    p->alarm_tick-=1;
+    if(p->alarm_tick==0 && p->alarm_state == ALARM_IDLE){
+        p->alarm_tick = p->alarm_total_tick;
+        memmove(p->alarm_trapframe,p->trapframe,sizeof(struct trapframe));
+        p->trapframe->epc = (uint64)p->alarm_func;
+        p->alarm_state = ALARM_WORKING;
+      }
+    }
   } else {
     printf("usertrap(): unexpected scause %p pid=%d\n", r_scause(), p->pid);
     printf("            sepc=%p stval=%p\n", r_sepc(), r_stval());
@@ -77,13 +87,14 @@ usertrap(void)
     exit(-1);
 
   // give up the CPU if this is a timer interrupt.
-  if(which_dev == 2)
+  if(which_dev == 2){
     yield();
-
+  }
   usertrapret();
 }
 
-//
+
+
 // return to user space
 //
 void
@@ -115,7 +126,6 @@ usertrapret(void)
   x |= SSTATUS_SPIE; // enable interrupts in user mode
   w_sstatus(x);
 
-  // set S Exception Program Counter to the saved user pc.
   w_sepc(p->trapframe->epc);
 
   // tell trampoline.S the user page table to switch to.
@@ -148,11 +158,10 @@ kerneltrap()
     printf("sepc=%p stval=%p\n", r_sepc(), r_stval());
     panic("kerneltrap");
   }
-
   // give up the CPU if this is a timer interrupt.
-  if(which_dev == 2 && myproc() != 0 && myproc()->state == RUNNING)
+  if(which_dev == 2 && myproc() != 0 && myproc()->state == RUNNING){
     yield();
-
+  }
   // the yield() may have caused some traps to occur,
   // so restore trap registers for use by kernelvec.S's sepc instruction.
   w_sepc(sepc);

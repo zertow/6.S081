@@ -13,6 +13,5 @@ int f(int x) {
 
 void main(void) {
   printf("%d %d\n", f(8)+1, 13);
-  printf("x=%d y=%d,z=%d", 3,2);
   exit(0);
 }
