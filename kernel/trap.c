@@ -66,9 +66,9 @@ usertrap(void)
     intr_on();
 
     syscall();
-  } else if((which_dev = devintr()) ==2){
+  } else if((which_dev = devintr()) != 0){
     // ok
-    if(p->alarm_total_tick !=0){
+    if(which_dev==2&& p->alarm_total_tick !=0){
     p->alarm_tick-=1;
     if(p->alarm_tick==0 && p->alarm_state == ALARM_IDLE){
         p->alarm_tick = p->alarm_total_tick;
