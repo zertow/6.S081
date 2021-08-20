@@ -72,3 +72,167 @@ backtrace(void)
 ```
 当然，也可以把fp声明成uint64，这样就不会有这个问题了。
 
+# Alarm
+
+这个lab分为了两部分。
+
+## test0
+
+首先看第一部分。
+
+第一部分需要添加两个`syscall`，使得lab能够运行起来。这部分和`lab syscall`类似，这里就不再赘述。添加完后，需要在`sys_sigalarm`中保存tick的信息和函数指针。
+
+```c
+/**
+ *  添加系统调用
+ **/
+
+//kernel/syscall.c
+extern uint64 sys_sigalarm(void);
+extern uint64 sys_sigreturn(void);
+
+static uint64 (*syscalls[])(void) = {
+    //....
+    [SYS_sigalarm]   sys_sigalarm,
+	[SYS_sigreturn]   sys_sigreturn,
+}
+
+//kernel/syscall.h
+#define SYS_sigalarm  22
+#define SYS_sigreturn  23
+
+//user/user.h
+int sigalarm(int ticks, void (*handler)());
+int sigreturn(void);
+
+//user/usys.pl
+entry("sigalarm");
+entry("sigreturn");
+
+//Makefile
+UPROGS=\
+    //...
+    $U/_alarmtest\ 
+
+//kernel/proc.h
+struct proc{
+   //....
+  int alarm_tick;
+  int alarm_total_tick;
+  void* alarm_func;
+}
+//kernel/proc.c
+static struct proc*
+allocproc(void){
+    //...
+    p->context.ra = (uint64)forkret;
+	p->context.sp = p->kstack + PGSIZE;
+    p->alarm_total_tick = 0; //add
+    //...
+}
+
+//kernel/sysproc.c
+uint64 sys_sigalarm(void){
+  struct proc *p = myproc();
+  if(argint(0, &p->alarm_total_tick) || argaddr(1, (uint64*)&p->alarm_func))
+    return -1;
+  p->alarm_tick = p->alarm_total_tick;
+}
+
+```
+
+然后在`trap.c的usertrap`中，要添加相应的响应。一开始我因为注释上写`send interrupts and exceptions to kerneltrap()` ，我以为是在`systrap`里面。后面发现只要在`usertrap`里改就行了。
+
+读一下代码可以发现`which_dev=2`的时候，就是有时钟中断的时候。因此可以修改if循环。主要这里不要忘了处理`which_dev!=0`的其他情况：
+
+```c
+if(r_scause() == 8){
+    //...
+}else if((which_dev = devintr()) != 0){//之前忘了把这里改成==2了，usertest就出错了
+	if(which_dev==2&& p->alarm_total_tick !=0){
+    p->alarm_tick-=1;
+    if(p->alarm_tick==0){
+        p->alarm_tick = p->alarm_total_tick;
+        p->trapframe->epc = (uint64)p->alarm_func;
+      }
+    }
+}else{
+    // ....
+}
+```
+
+为什么这样改可以呢？因为进入用户态调用的是`userret()`。但是`userret()`存的pc是之前ecall的pc+4,而不是我们想要的函数地址，看一下`userret`的代码可以发现，它读取的pc是`p->trapframe->epc`，因此我们只要修改这个就可以了。
+
+## test1/2
+
+接下来是返回。函数返回时，会调用`sys_sigreturn`。我们只需要在这里复原寄存器和pc就可以了。要复原的话，就得提前存起来。因此需要分配一个`trapframe`来保存信息。另外，提示中说如果当前正在执行alarm函数，而且没返回，就不允许再执行alarm函数。
+
+```c
+//kernel/proc.h
+struct proc{
+   //....
+  int alarm_state; // 当前alarm函数状态
+  struct trapframe * alarm_trapframe; // alarm专用trapframe
+}
+//kernel/proc.c
+static struct proc*
+allocproc(void){
+  // Allocate a trapframe page.
+  if((p->trapframe = (struct trapframe *)kalloc()) == 0){
+    release(&p->lock);
+    return 0;
+  }
+  // 分配alarm_trapframe
+  if((p->alarm_trapframe = (struct trapframe *)kalloc()) == 0){
+    release(&p->lock);
+    return 0;
+  }
+  p->alarm_state=0;
+  //....
+}
+
+// user/trap.c
+usertrap(void){
+    //....
+ else if((which_dev = devintr()) ==2){
+    // ok
+    if(p->alarm_total_tick !=0){
+    p->alarm_tick-=1;
+    if(p->alarm_tick==0 && p->alarm_state == 0){
+        p->alarm_tick = p->alarm_total_tick;
+        // 备份p->alarm_trapframe
+        memmove(p->alarm_trapframe,p->trapframe,sizeof(struct trapframe));
+        p->trapframe->epc = (uint64)p->alarm_func;
+        p->alarm_state = 1;
+      }
+    }
+  } else {
+    //....
+}
+// kernel/sysproc.c
+uint64 sys_sigreturn(void){
+  struct proc *p = myproc();
+  if(p->alarm_state == 1){
+    p->alarm_state = 0;
+  }
+  // 重新覆写p->alarm_trapframe
+  memmove(p->trapframe,p->alarm_trapframe,sizeof(struct trapframe));
+  return 0;
+}
+
+```
+
+
+
+
+
+## 遇到的问题
+
+### 看错提示了
+
+提示上说函数的地址可以是0，我则看成了函数的地址不应该为0，然后以为是参数获取错误了，折腾了好久
+
+### 改错地方没有复原
+
+这个lab的代码量不大，主要是要知道要改哪里。一开始的时候比较混乱，改错了很多地方，而且也没有复原，后面`alarmtest`过了，但是`usertests`一直过不了。于是我通过git checkout跳转到旧版本看是否能运行`usertests`，再用git commit逐一比对错误的地方，最后解决了问题。当然这个主要是写代码习惯不好的问题，应该每通过一个lab，或者每一次commit都要检查是否通过usertests。后面可以考虑用CI工具来检查这个。
+
