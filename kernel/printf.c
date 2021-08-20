@@ -141,20 +141,7 @@ backtrace(void)
   uint64* page_up = (uint64*)PGROUNDUP((uint64)(fp));
   printf("backtrace:\n");
   while(fp < page_up ) {
-    printf("%p\n",*(fp - 1)); // fp-8是返回地址
+    printf("%p\n",*(fp - 1)); // fp-1是返回地址
     fp = (uint64*)*(fp - 2); 
   }
 }
-
-// void 
-// backtrace(void)
-// {
-//   uint64 fp = r_fp(); // 栈基址的指针
-//   uint64 page_up = PGROUNDUP(fp);
-//   // uint64* page_up = (uint64*)PGROUNDUP((uint64)(fp));
-//   printf("backtrace:\n");
-//   while(fp < page_up ) {
-//     printf("%p\n",*(uint64*)(fp-8)); // fp-8是返回地址
-//     fp = *(uint64*)(fp - 16); 
-//   }
-// }
