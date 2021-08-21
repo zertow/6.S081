@@ -2137,7 +2137,7 @@ kernmem(char *s)
       exit(1);
     }
     if(pid == 0){
-      printf("%s: oops could read %x = %x\n", a, *a);
+      printf("%s: oops could read %x = %x\n",s,a, *a);
       exit(1);
     }
     int xstatus;
