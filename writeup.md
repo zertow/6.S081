@@ -70,7 +70,70 @@ test kernmem: : oops could read 0 = 0
 panic: freewalk: leaf
 ```
 这个搜一下`oops could read`，发现这个测试是测能否读到内核数据的。结果发现读到了。说明缺页处理有问题。
+```c
+//....
+} else if ( (r_scause()== 13 || r_scause() ==15) && (r_stval() < p->sz || r_stval() > p->trapframe->sp)){
+    mem = kalloc();
+    if(mem != 0){
+      va = PGROUNDDOWN(r_stval());
+      memset(mem, 0, PGSIZE);
+      if(mappages(p->pagetable, va, PGSIZE, (uint64)mem, PTE_W|PTE_X|PTE_R|PTE_U) != 0){
+        uvmdealloc(p->pagetable, va, va -PGSIZE);
+        kfree(mem);
+        p->killed = 1;
+      }
+    }else{
+      p->killed = 1;
+    }
+
+  } else {
+//....
+```
+我一开始感觉没问题，后面找了个别人写的比对一下，发现判断条件写错了。我理解错进程的模型了。  
+![](https://raw.githubusercontent.com/ruiqurm/image_host/master/blog/20210822222507.png)
+我以为用户栈是在`p->sz`之上...  所以写错了。正确的写法是这样的：
+```
+if(va >= p->sz || va < p->trapframe->sp)return 0;
+```
+之前的理解确实错的离谱，一部分是看得太快的原因，现在补一下课；  
+进程初始化的时候，会分配一个固定的空间。也就是分配到上图中的STACK那里。然后，stack处作为栈基址，向下做一个guard page。而`sbrk`的时候，伸长出来的内存就是堆内存。   
+
+不过这个改完以后还是不行，仔细看一下hint和其他的blog，发现少做了supervisor模式的页错误。这个页错误主要是`copyin`函数内的`walkaddr`产生的。因此修改`walkaddr`即可：
+```c
+uint64
+walkaddr(pagetable_t pagetable, uint64 va)
+{
+  pte_t *pte;
+  uint64 pa;
+  struct proc * p = myproc();
+  char * mem;
+  if(va >= MAXVA)
+    return 0;
+
+  pte = walk(pagetable, va, 0);
+  if(pte == 0 || ((*pte & PTE_V) == 0) ){
+    if(va >= p->sz || va < p->trapframe->sp)return 0;
+    mem = kalloc();
+    if(mem == 0)return 0;
+    va = PGROUNDDOWN(va);
+    memset(mem, 0, PGSIZE);
+    if(mappages(p->pagetable, va, PGSIZE, (uint64)mem, PTE_W|PTE_X|PTE_R|PTE_U) != 0){
+      kfree(mem);
+      return 0;
+    }
+    return (uint64)mem;
+  }
+  if((*pte & PTE_U) == 0)
+    return 0;
+  pa = PTE2PA(*pte);
+  return pa;
+}
+```
+
+
+
 
 参考：  
+* （有完整代码）https://blog.csdn.net/u012419550/article/details/115415194
+* （比较详细分析）https://blog.csdn.net/RedemptionC/article/details/107464400
 * https://blog.csdn.net/passenger12234/article/details/117869436
-* https://blog.csdn.net/RedemptionC/article/details/107464400
