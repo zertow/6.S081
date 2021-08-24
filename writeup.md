@@ -1,6 +1,145 @@
+# Eliminate allocation from sbrk
+这个lab要求将`sbrk`改为使用`lazy allocation`。我一开始的想法是去改uvmmap，改成`walk`的时候添加页表，但是不添加`valid`。后面发现没必要这样做，只需要改size就行了。  
+改size的时候，要注意几个问题：
+* addr改成uint64的
+* 分开处理n>=0和n<0的情况
+* 返回值是原来的大小，而不是变更后的大小。（出现的错误可以看后面遇到问题的记录）
 
 
-## 遇到的部分问题
+```c
+uint64
+sys_sbrk(void)
+{
+  uint64 addr;
+  int n;
+  struct proc *p = myproc();
+  addr =  p->sz;
+  if(argint(0, &n) < 0)
+    return -1;
+  if(n >= 0){
+    p->sz = addr+n; 
+  }else{
+    p->sz = uvmdealloc(p->pagetable, addr, addr + n);
+  }
+  return addr;
+}
+```
+# Lazy allocation
+这一部分需要添加的是处理页错误的内容。  
+查一下riscv的手册，发现出现读写页错误对应的code分别是13和15。于是参考`uvmalloc`分配页的代码，在`trap.c`的`usertrap()`里加上：
+```c
+// ...
+  } else if((which_dev = devintr()) != 0){
+    // ok
+  } else if (r_scause()== 13 || r_scause() ==15){
+    if (r_stval() >= p->sz) p->killed= 1;
+    else{
+      mem = kalloc();
+      if(mem != 0){
+        va = PGROUNDDOWN(r_stval());//分配页的时候要取整地址
+        memset(mem, 0, PGSIZE);
+        if(mappages(p->pagetable, va, PGSIZE, (uint64)mem, PTE_W|PTE_X|PTE_R|PTE_U) != 0){
+          // uvmdealloc(p->pagetable, va, va -PGSIZE);
+          kfree(mem);
+          p->killed = 1;
+        }
+      }else{
+        p->killed = 1;
+      }
+    }
+  } else {
+  // ...
+```
+改完后运行一下`echo hi`，会发现还是会出现`panic`。看下`panic`出现的地方是`uvmunmap`,在出现`panic`的地方改为`continue`。这里可以跳过是因为存在`not mapped`或者`not a leaf`的页是合法的。
+# Lazytests and Usertests
+这一部分是在之前的基础上继续修改。  
+看一下hints：
+## 处理`sbrk`的负参数的情况
+上面已经处理
+## 如果访问到比`sbrk`高的地址杀死进程
+上面已经处理
+## 修改`fork`
+这里主要要改的`uvmcopy`。对于懒分配的页，复制的时候会`walk`返回0，因此要跳过这些页。
+```c
+//uvmcopy() ....
+  for(i = 0; i < sz; i += PGSIZE){
+    if((pte = walk(old, i, 0)) == 0)continue;
+      // panic("uvmcopy: pte should exist");
+    if((*pte & PTE_V) == 0)continue;
+      // panic("uvmcopy: page not present");
+    pa = PTE2PA(*pte);
+    flags = PTE_FLAGS(*pte);
+//....  
+```
+## 处理supervisor模式访问的页错误
+之前做的都是处理`usertrap`的页错误，还需要处理内核访问用户页出现的页错误。这里主要是在`copyin`函数里，而`copyin`调用的又是`walkaddr`。把`usertrap`处理页错误的部分改一下放进来即可：
+```c
+// walkaddr
+ pte = walk(pagetable, va, 0);
+  if(pte == 0 || ((*pte & PTE_V) == 0) ){
+    if(va >= p->sz)return 0;
+    mem = kalloc();
+    if(mem == 0)return 0;
+    va = PGROUNDDOWN(va);
+    memset(mem, 0, PGSIZE);
+    if(mappages(p->pagetable, va, PGSIZE, (uint64)mem, PTE_W|PTE_X|PTE_R|PTE_U) != 0){
+      kfree(mem);
+      return 0;
+    }
+    return (uint64)mem;
+  }
+  if((*pte & PTE_U) == 0)
+    return 0;
+```
+## 处理物理内存耗尽错误
+上面处理过了
+## 处理访问user stack和guard page之间的部分
+这个问题在后面遇到的问题部分记录了。  
+首先要清楚user process的内存分配。
+```
+---------- 
+|trampoline|
+|         | 
+---------- 
+|trapframe|
+|         | 
+---------- 
+| 未使用  |
+----------  <----- (proc->sz)
+|  堆     |
+|         | 
+----------  <----- (proc->sz刚开始执行的时候的值)
+| 栈      |
+----------  <------(proc->trapframe->sp)
+|未用栈   | 
+----------
+|guard   |
+----------
+|  data  |
+|  text  |
+---------- 
+```
+现在要处理的就是访问未用栈的那部分。在栈以下，是不会出现lazy allocation的。因此只需要判断是否是访问越界的行为，即指针小于`proc->trapframe->sp`。 
+修改`usertrap`和`walkaddr`里的判断条件：
+```c
+// walkaddr
+ if(pte == 0 || ((*pte & PTE_V) == 0) ){
+    if(va >= p->sz || va < p->trapframe->sp)return 0;
+    // 加上判断栈的条件
+    mem = kalloc();
+    if(mem == 0)return 0;
+
+// usertrap
+ } else if (r_scause()== 13 || r_scause() ==15){
+    if (r_stval() >= p->sz || r_stval() < p->trapframe->sp) p->killed= 1;
+    // 加上判断栈的条件
+    else{
+      mem = kalloc();
+//....
+```
+最后，如果还有panic，可以再把它注释掉。不过，如果`freewalk`里出现panic可能是写错了。
+
+# 遇到的部分问题
 这里记录一下一些bug解决的过程。  
 ### sbrk的问题
 sbrk我至少犯了两个错误。
@@ -131,7 +270,8 @@ walkaddr(pagetable_t pagetable, uint64 va)
 ```
 
 
-
+# 总结
+这个lab总体来说难度不是很大，但是因为一些细节上的小错误，加上不太会用qemu debug，我处理各种bug还是用了很长时间。还是要好好看代码和配套的书。   
 
 参考：  
 * （有完整代码）https://blog.csdn.net/u012419550/article/details/115415194
