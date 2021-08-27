@@ -52,7 +52,9 @@ kfree(void *pa)
 
   if(((uint64)pa % PGSIZE) != 0 || (char*)pa < end || (uint64)pa >= PHYSTOP)
     panic("kfree");
+  acquire(&kmem.lock);
   if(kmem_rcount[KMEM_RCINDEX((uint64)pa)]>1){
+    release(&kmem.lock);
     kmem_rcount[KMEM_RCINDEX((uint64)pa)]--;
     return;
   }
@@ -61,7 +63,7 @@ kfree(void *pa)
 
   r = (struct run*)pa;
 
-  acquire(&kmem.lock);
+  
   r->next = kmem.freelist;
   kmem.freelist = r;
   release(&kmem.lock);
@@ -90,14 +92,22 @@ kalloc(void)
 
 void 
 refcount_inc(uint64 pa){
+  acquire(&kmem.lock);
   kmem_rcount[KMEM_RCINDEX((uint64)pa)]++;
+  release(&kmem.lock);
 }
 
 void
 refcount_dec(uint64 pa){
+  acquire(&kmem.lock);
   kmem_rcount[KMEM_RCINDEX((uint64)pa)]--;
+  release(&kmem.lock);
 }
 int
 refcount_get(uint64 pa){
+  acquire(&kmem.lock);
   return kmem_rcount[KMEM_RCINDEX((uint64)pa)];
+}
+void refcount_get_release(){
+  release(&kmem.lock);
 }

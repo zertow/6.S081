@@ -2777,6 +2777,8 @@ main(int argc, char *argv[])
       if(!run(t->f, t->s))
         fail = 1;
     }
+    free1 = countfree();
+    printf("free0:%d free1:%d\n",free0,free1);
   }
 
   if(fail){

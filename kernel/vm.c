@@ -357,12 +357,17 @@ alloccow(pagetable_t pagetable,uint64 va)
   if((*pte & PTE_COW) == 0)
     panic("alloccow: not a COW");
   flags = (PTE_FLAGS(*pte) & (~PTE_COW)) | PTE_W;
-  if((mem = kalloc()) == 0)return -1;
   pa = PTE2PA(*pte);
-  // memset((char*)mem, 0, PGSIZE);
-  memmove(mem, (char*)pa, PGSIZE);
+  if(refcount_get(pa)==1){
+    refcount_get_release();
+    mem = (char*)pa;
+  }else{
+    refcount_get_release();
+    if((mem = kalloc()) == 0)return -1;
+    memmove(mem, (char*)pa, PGSIZE);
+    kfree((void*)pa);
+  }
   *pte = (uint64)PA2PTE(mem) |flags;
-  kfree((void*)pa);
   return 0;
 }
 // mark a PTE invalid for user access.
