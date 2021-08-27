@@ -69,7 +69,8 @@ usertrap(void)
     // ok
   } else if(r_scause()==15){
     if(alloccow(p->pagetable,r_stval())==-1){
-      panic("error!");
+      printf("no physical memory\n");
+      p->killed = 1;
     }
   } else {
     printf("usertrap(): unexpected scause %p pid=%d\n", r_scause(), p->pid);

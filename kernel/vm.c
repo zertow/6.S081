@@ -329,7 +329,7 @@ uvmcopy(pagetable_t old, pagetable_t new, uint64 sz)
       goto err;
     }
     inc_ref(pa);
-    printf("copy: %p map to %p flags:%p\n",i,pa,PTE_FLAGS(*pte));
+    // printf("copy: %p map to %p flags:%p\n",i,pa,PTE_FLAGS(*pte));
   }
   return 0;
 
@@ -337,16 +337,17 @@ uvmcopy(pagetable_t old, pagetable_t new, uint64 sz)
   uvmunmap(new, 0, i / PGSIZE, 0); 
   return -1;
 }
+
 int
 alloccow(pagetable_t pagetable,uint64 va)
 {
   pte_t *pte;
   uint flags;
-  uint64 pa;
+  uint64 pa,a;
   char *mem;
 
-  va = PGROUNDDOWN(va);
-  if((pte = walk(pagetable, va, 0)) == 0)
+  a = PGROUNDDOWN(va);
+  if((pte = walk(pagetable, a, 0)) == 0)
       panic("alloccow: pte should exist");
   if((*pte & PTE_V) == 0)
     panic("alloccow: page not present");
@@ -381,10 +382,23 @@ int
 copyout(pagetable_t pagetable, uint64 dstva, char *src, uint64 len)
 {
   uint64 n, va0, pa0;
-
+  pte_t *pte;
   while(len > 0){
+    /**
+     * COW分配物理页
+     * 
+     */
     va0 = PGROUNDDOWN(dstva);
-    pa0 = walkaddr(pagetable, va0);
+    pte = walk(pagetable,va0,0);
+    if(!pte)panic("copyout:pte not exists");
+    if(*pte & PTE_COW){
+      if (alloccow(pagetable,va0)<-1)return -1;
+      pa0 = walkaddr(pagetable, va0);
+    }else{
+      pa0 = PTE2PA(*pte);
+    }
+
+    // pa0 = walkaddr(pagetable, va0);
     if(pa0 == 0)
       return -1;
     n = PGSIZE - (dstva - va0);
