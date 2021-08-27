@@ -71,9 +71,10 @@ kvminithart()
 pte_t *
 walk(pagetable_t pagetable, uint64 va, int alloc)
 {
-  if(va >= MAXVA)
+  if(va >= MAXVA){
+    printf("dstva: %p\n",va);
     panic("walk");
-
+  }
   for(int level = 2; level > 0; level--) {
     pte_t *pte = &pagetable[PX(level, va)];
     if(*pte & PTE_V) {
@@ -346,11 +347,15 @@ alloccow(pagetable_t pagetable,uint64 va)
   uint64 pa,a;
   char *mem;
 
+  if(va >= MAXVA)
+      return -1;
   a = PGROUNDDOWN(va);
   if((pte = walk(pagetable, a, 0)) == 0)
       panic("alloccow: pte should exist");
-  if((*pte & PTE_V) == 0)
-    panic("alloccow: page not present");
+  if(pte==0 || (*pte & PTE_V) == 0 || (*pte & PTE_U) == 0)
+      return -1;
+  // if((*pte & PTE_V) == 0)
+  //   panic("alloccow: page not present");
   if((*pte & PTE_COW) == 0)
     panic("alloccow: not a COW");
   flags = (PTE_FLAGS(*pte) & (~PTE_COW)) | PTE_W;
@@ -389,15 +394,18 @@ copyout(pagetable_t pagetable, uint64 dstva, char *src, uint64 len)
      * 
      */
     va0 = PGROUNDDOWN(dstva);
+    if(va0 >= MAXVA)
+      return -1;
     pte = walk(pagetable,va0,0);
-    if(!pte)panic("copyout:pte not exists");
+    if(pte==0 || (*pte & PTE_V) == 0 || (*pte & PTE_U) == 0)
+      return -1;
     if(*pte & PTE_COW){
+      printf("dstva: %p\n",dstva);
       if (alloccow(pagetable,va0)<-1)return -1;
       pa0 = walkaddr(pagetable, va0);
     }else{
       pa0 = PTE2PA(*pte);
     }
-
     // pa0 = walkaddr(pagetable, va0);
     if(pa0 == 0)
       return -1;
