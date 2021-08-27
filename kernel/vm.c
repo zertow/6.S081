@@ -311,30 +311,56 @@ uvmcopy(pagetable_t old, pagetable_t new, uint64 sz)
   pte_t *pte;
   uint64 pa, i;
   uint flags;
-  char *mem;
-
+  // char *mem;
   for(i = 0; i < sz; i += PGSIZE){
     if((pte = walk(old, i, 0)) == 0)
       panic("uvmcopy: pte should exist");
     if((*pte & PTE_V) == 0)
       panic("uvmcopy: page not present");
     pa = PTE2PA(*pte);
+    *pte &= ~PTE_W; //移除原来的写标记
+    *pte |= PTE_COW; // 子进程添加COW标记
     flags = PTE_FLAGS(*pte);
-    if((mem = kalloc()) == 0)
-      goto err;
-    memmove(mem, (char*)pa, PGSIZE);
-    if(mappages(new, i, PGSIZE, (uint64)mem, flags) != 0){
-      kfree(mem);
+    // if((mem = kalloc()) == 0)
+    //   goto err;
+    // memmove(mem, (char*)pa, PGSIZE);
+      // kfree(mem);
+    if(mappages(new, i, PGSIZE, (uint64)pa, flags) != 0){
       goto err;
     }
+    inc_ref(pa);
+    printf("copy: %p map to %p flags:%p\n",i,pa,PTE_FLAGS(*pte));
   }
   return 0;
 
  err:
-  uvmunmap(new, 0, i / PGSIZE, 1);
+  uvmunmap(new, 0, i / PGSIZE, 0); 
   return -1;
 }
+int
+alloccow(pagetable_t pagetable,uint64 va)
+{
+  pte_t *pte;
+  uint flags;
+  uint64 pa;
+  char *mem;
 
+  va = PGROUNDDOWN(va);
+  if((pte = walk(pagetable, va, 0)) == 0)
+      panic("alloccow: pte should exist");
+  if((*pte & PTE_V) == 0)
+    panic("alloccow: page not present");
+  if((*pte & PTE_COW) == 0)
+    panic("alloccow: not a COW");
+  flags = (PTE_FLAGS(*pte) & (~PTE_COW)) | PTE_W;
+  if((mem = kalloc()) == 0)return -1;
+  pa = PTE2PA(*pte);
+  // memset((char*)mem, 0, PGSIZE);
+  memmove(mem, (char*)pa, PGSIZE);
+  *pte = (uint64)PA2PTE(mem) |flags;
+  kfree((void*)pa);
+  return 0;
+}
 // mark a PTE invalid for user access.
 // used by exec for the user stack guard page.
 void

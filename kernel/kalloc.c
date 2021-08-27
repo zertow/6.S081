@@ -13,7 +13,7 @@ void freerange(void *pa_start, void *pa_end);
 
 extern char end[]; // first address after kernel.
                    // defined by kernel.ld.
-
+int kmem_rcount[32768];
 struct run {
   struct run *next;
 };
@@ -35,8 +35,10 @@ freerange(void *pa_start, void *pa_end)
 {
   char *p;
   p = (char*)PGROUNDUP((uint64)pa_start);
-  for(; p + PGSIZE <= (char*)pa_end; p += PGSIZE)
+  for(; p + PGSIZE <= (char*)pa_end; p += PGSIZE){
+    kmem_rcount[KMEM_RCINDEX((uint64)p)] = 0;
     kfree(p);
+  }
 }
 
 // Free the page of physical memory pointed at by v,
@@ -50,7 +52,10 @@ kfree(void *pa)
 
   if(((uint64)pa % PGSIZE) != 0 || (char*)pa < end || (uint64)pa >= PHYSTOP)
     panic("kfree");
-
+  if(kmem_rcount[KMEM_RCINDEX((uint64)pa)]>1){
+    kmem_rcount[KMEM_RCINDEX((uint64)pa)]--;
+    return;
+  }
   // Fill with junk to catch dangling refs.
   memset(pa, 1, PGSIZE);
 
@@ -78,5 +83,15 @@ kalloc(void)
 
   if(r)
     memset((char*)r, 5, PGSIZE); // fill with junk
+  if(r)
+    kmem_rcount[KMEM_RCINDEX((uint64)r)] = 1;
   return (void*)r;
+}
+
+void inc_ref(uint64 pa){
+  kmem_rcount[KMEM_RCINDEX((uint64)pa)]++;
+}
+
+void dec_ref(uint64 pa){
+  kmem_rcount[KMEM_RCINDEX((uint64)pa)]--;
 }
