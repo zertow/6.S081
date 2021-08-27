@@ -88,10 +88,16 @@ kalloc(void)
   return (void*)r;
 }
 
-void inc_ref(uint64 pa){
+void 
+refcount_inc(uint64 pa){
   kmem_rcount[KMEM_RCINDEX((uint64)pa)]++;
 }
 
-void dec_ref(uint64 pa){
+void
+refcount_dec(uint64 pa){
   kmem_rcount[KMEM_RCINDEX((uint64)pa)]--;
+}
+int
+refcount_get(uint64 pa){
+  return kmem_rcount[KMEM_RCINDEX((uint64)pa)];
 }

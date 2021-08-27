@@ -71,10 +71,8 @@ kvminithart()
 pte_t *
 walk(pagetable_t pagetable, uint64 va, int alloc)
 {
-  if(va >= MAXVA){
-    printf("dstva: %p\n",va);
+  if(va >= MAXVA)
     panic("walk");
-  }
   for(int level = 2; level > 0; level--) {
     pte_t *pte = &pagetable[PX(level, va)];
     if(*pte & PTE_V) {
@@ -329,13 +327,13 @@ uvmcopy(pagetable_t old, pagetable_t new, uint64 sz)
     if(mappages(new, i, PGSIZE, (uint64)pa, flags) != 0){
       goto err;
     }
-    inc_ref(pa);
+    refcount_inc(pa);
     // printf("copy: %p map to %p flags:%p\n",i,pa,PTE_FLAGS(*pte));
   }
   return 0;
 
  err:
-  uvmunmap(new, 0, i / PGSIZE, 0); 
+  uvmunmap(new, 0, i / PGSIZE, 1); 
   return -1;
 }
 
@@ -400,7 +398,6 @@ copyout(pagetable_t pagetable, uint64 dstva, char *src, uint64 len)
     if(pte==0 || (*pte & PTE_V) == 0 || (*pte & PTE_U) == 0)
       return -1;
     if(*pte & PTE_COW){
-      printf("dstva: %p\n",dstva);
       if (alloccow(pagetable,va0)<-1)return -1;
       pa0 = walkaddr(pagetable, va0);
     }else{
