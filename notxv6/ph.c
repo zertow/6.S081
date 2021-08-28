@@ -92,9 +92,7 @@ get_thread(void *xa)
   int missing = 0;
 
   for (int i = 0; i < NKEYS; i++) {
-    pthread_mutex_lock(&lock);  
     struct entry *e = get(keys[i]);
-    pthread_mutex_unlock(&lock);
     if (e == 0) missing++;
   }
   printf("%d: %d keys missing\n", n, missing);
