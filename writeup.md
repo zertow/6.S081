@@ -1,3 +1,8 @@
+# Uthread: switching between threads 
+这个lab要求实现一个简单的用户程序级的多线程。
+## 坑点：
+* 栈sp
+* 
 # Using threads 
 这个lab比较简单，只要加几个锁就行了。  
 它这里的测试不是很完善，测的是同时使用get和同时使用put的情况，所以get在这个测试条件下是不需要加锁的。
