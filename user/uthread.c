@@ -31,8 +31,8 @@ struct thread_context {
 
 struct thread {
   char       stack[STACK_SIZE]; /* the thread's stack */
-  int        state;             /* FREE, RUNNING, RUNNABLE */
   struct thread_context context;
+  int        state;             /* FREE, RUNNING, RUNNABLE */
 };
 struct thread all_thread[MAX_THREAD];
 struct thread *current_thread;
@@ -79,7 +79,7 @@ thread_schedule(void)
      * Invoke thread_switch to switch from t to next_thread:
      * thread_switch(??, ??);
      */
-    thread_switch((uint64)&t->context,(uint64)&current_thread->context);
+    thread_switch((uint64)&t->context,(uint64)&next_thread->context);
   } else
     next_thread = 0;
 }
@@ -94,7 +94,7 @@ thread_create(void (*func)())
   }
   t->state = RUNNABLE;
   // YOUR CODE HERE
-   t->context.sp = (uint64)&t->stack;
+   t->context.sp = (uint64)((char*)&t->context);
    t->context.ra = (uint64)func;
 }
 
