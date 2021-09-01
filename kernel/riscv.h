@@ -352,3 +352,6 @@ sfence_vma()
 
 typedef uint64 pte_t;
 typedef uint64 *pagetable_t; // 512 PTEs
+
+
+#define GET_STEAL_ADDR(p) (int)(((uint64)p>>12) & 0x7fff)
