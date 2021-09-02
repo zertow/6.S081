@@ -32,12 +32,12 @@ void
 kinit()
 {
   int i;
-  char tmp_buf[16];
+  static char tmp_buf[16*NCPU];//注意传到锁那边不会再做拷贝。
   uint64 total_sz,chunk,new_end,tmp;
 
   for(i=0;i<NCPU;i++){
-    snprintf(tmp_buf,16,"kmem-%d",i);
-    initlock(&kmem[i].lock, tmp_buf);
+    snprintf(tmp_buf+i*16,16,"kmem-%d",i);
+    initlock(&kmem[i].lock, tmp_buf+i*16);
   }
   total_sz = (uint64)((char*)PHYSTOP - end + PGSIZE);
   chunk = total_sz / PGSIZE / NCPU;

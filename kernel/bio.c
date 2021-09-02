@@ -45,13 +45,13 @@ void
 binit(void)
 {
   struct buf *b,*blast;
-  // char tmp_buf[32];
+  static char tmp_buf[16*NBUF_BUCKET];//注意传到锁那边不会再做拷贝。
   int i;
   uint64 chunk;
   chunk = NBUF / NBUF_BUCKET;
   for(i=0;i<NBUF_BUCKET;i++){
-    // snprintf(tmp_buf,32,"bcache-bucket-%d",i);
-    initlock(&bcache.bucket[i].lock, "bucket");
+    snprintf(tmp_buf+i*16,16,"bcache-%d",i);
+    initlock(&bcache.bucket[i].lock, tmp_buf+i*16);
     // 给每个bucket平均分配
     blast =(i==NBUF_BUCKET - 1)? bcache.buf+NBUF : bcache.buf+(i+1)*chunk;
     b = bcache.buf + i*chunk;
