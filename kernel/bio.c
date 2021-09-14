@@ -44,27 +44,49 @@ struct {
 void
 binit(void)
 {
+  // struct buf *b,*blast;
+  // static char tmp_buf[16*NBUF_BUCKET];//注意传到锁那边不会再做拷贝。
+  // int i;
+  // uint64 chunk;
+  // chunk = NBUF / NBUF_BUCKET;
+  // for(i=0;i<NBUF_BUCKET;i++){
+  //   snprintf(tmp_buf+i*16,16,"bcache-%d",i);
+  //   initlock(&bcache.bucket[i].lock, tmp_buf+i*16);
+  //   // 给每个bucket平均分配
+  //   blast =(i==NBUF_BUCKET - 1)? bcache.buf+NBUF : bcache.buf+(i+1)*chunk;
+  //   b = bcache.buf + i*chunk;
+  //   bcache.bucket[i].head.prev = &bcache.bucket[i].head;
+  //   bcache.bucket[i].head.next = &bcache.bucket[i].head;
+  //   for(;b!=blast;b++){
+  //     // 插在最前面
+  //     b->next = bcache.bucket[i].head.next;
+  //     b->prev = &bcache.bucket[i].head;
+  //     initsleeplock(&b->lock, "buffer");
+  //     bcache.bucket[i].head.next->prev = b;
+  //     bcache.bucket[i].head.next = b;
+  //   }
+  // }
+
   struct buf *b,*blast;
   static char tmp_buf[16*NBUF_BUCKET];//注意传到锁那边不会再做拷贝。
-  int i;
-  uint64 chunk;
-  chunk = NBUF / NBUF_BUCKET;
-  for(i=0;i<NBUF_BUCKET;i++){
+  // uint64 chunk;
+  // chunk = NBUF / NBUF_BUCKET;
+  for(int i=0;i<NBUF_BUCKET;i++){
     snprintf(tmp_buf+i*16,16,"bcache-%d",i);
     initlock(&bcache.bucket[i].lock, tmp_buf+i*16);
-    // 给每个bucket平均分配
-    blast =(i==NBUF_BUCKET - 1)? bcache.buf+NBUF : bcache.buf+(i+1)*chunk;
-    b = bcache.buf + i*chunk;
     bcache.bucket[i].head.prev = &bcache.bucket[i].head;
     bcache.bucket[i].head.next = &bcache.bucket[i].head;
-    for(;b!=blast;b++){
-      // 插在最前面
-      b->next = bcache.bucket[i].head.next;
-      b->prev = &bcache.bucket[i].head;
-      initsleeplock(&b->lock, "buffer");
-      bcache.bucket[i].head.next->prev = b;
-      bcache.bucket[i].head.next = b;
-    }
+  }
+  blast = bcache.buf+NBUF;
+  b = bcache.buf;
+
+  for(;b!=blast;b++){
+    // 插在最前面
+    b->next = bcache.bucket[0].head.next;
+    b->prev = &bcache.bucket[0].head;
+    initsleeplock(&b->lock, "buffer");
+    bcache.bucket[0].head.next->prev = b;
+    bcache.bucket[0].head.next = b;
   }
 }
 
@@ -78,7 +100,6 @@ bget(uint dev, uint blockno)
   int id,i;
   id = BCACHE_HASH(dev,blockno);
   acquire(&bcache.bucket[id].lock);
-  // printf("get (%d %d)\n",dev,blockno);
   // Is the block already cached?
   for(b = bcache.bucket[id].head.next; b != &bcache.bucket[id].head; b = b->next){
     if(b->dev == dev && b->blockno == blockno){
@@ -110,7 +131,6 @@ bget(uint dev, uint blockno)
         //stealing
         b->prev->next = b->next;
         b->next->prev = b->prev;
-        release(&bcache.bucket[i].lock);
         b->prev = &bcache.bucket[id].head;
         b->next = bcache.bucket[id].head.next;
         bcache.bucket[id].head.next->prev = b;
@@ -118,8 +138,10 @@ bget(uint dev, uint blockno)
         b->dev = dev;
         b->blockno = blockno;
         b->refcnt = 1;
+        release(&bcache.bucket[i].lock);
         release(&bcache.bucket[id].lock);
         acquiresleep(&b->lock);
+        // printf("%d stealing from %d\n",id,i);
         return b; // uncache
       }
     }
