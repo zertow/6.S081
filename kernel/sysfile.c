@@ -309,6 +309,16 @@ sys_open(void)
       return -1;
     }
     ilock(ip);
+    if (!(omode & O_NOFOLLOW)){
+      // follow link
+      readi(ip,0,(uint64)path,0,14);
+      iunlockput(ip);
+      if((ip = namei(path)) == 0){
+        end_op();
+        return -1;
+      }
+      ilock(ip);
+    }
     if(ip->type == T_DIR && omode != O_RDONLY){
       iunlockput(ip);
       end_op();
@@ -490,6 +500,45 @@ uint64
 sys_symlink(void)
 {
   // symlink
-  return 0;
-  
+  char src[MAXPATH],dst[MAXPATH];
+  int n;
+  struct inode *ip;
+  int count = 0; // count for loop
+  if( (argstr(0,src,MAXPATH) <0) || (argstr(1,dst,MAXPATH) <0) ){
+    return -1;
+  }
+  /**
+   * link信息存在addr第一个block里面
+   * 尝试打开src,读取节点信息，递归直到第一个非link节点
+   * 如果不存在，返回-1
+   * 接下来创建一个以dst命名的节点(begin_op(),end_op())
+   */
+
+  begin_op();
+  if ((ip = namei(src))<0){
+    end_op();
+    return -1;
+  }
+  ilock(ip);
+  while(ip->type == T_SYMLINK){
+    panic("unimplemented");
+    count += 1;
+    iunlock(ip);
+    // ip = namei()
+    // TODO:
+    if(count>10){
+      end_op(); // out of max loop
+      return -1;
+    }
+  }
+  iunlockput(ip);
+
+  // 创建一个新的节点，写入node信息
+  ip = create(dst,T_SYMLINK,0,0);
+  ilock(ip);
+  n = strlen(src);
+  writei(ip,0,(uint64)src,0,n);
+  iunlockput(ip);
+  end_op();
+  return 0; 
 }
