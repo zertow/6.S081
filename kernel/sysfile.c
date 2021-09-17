@@ -109,7 +109,6 @@ sys_fstat(void)
 {
   struct file *f;
   uint64 st; // user pointer to struct stat
-
   if(argfd(0, 0, &f) < 0 || argaddr(1, &st) < 0)
     return -1;
   return filestat(f, st);
@@ -252,7 +251,8 @@ create(char *path, short type, short major, short minor)
   if((ip = dirlookup(dp, name, 0)) != 0){
     iunlockput(dp);
     ilock(ip);
-    if(type == T_FILE && (ip->type == T_FILE || ip->type == T_DEVICE))
+    if((type == T_FILE && (ip->type == T_FILE || ip->type == T_DEVICE)) ||
+       (type == T_SYMLINK && ip->type == T_SYMLINK))
       return ip;
     iunlockput(ip);
     return 0;
@@ -274,12 +274,10 @@ create(char *path, short type, short major, short minor)
     if(dirlink(ip, ".", ip->inum) < 0 || dirlink(ip, "..", dp->inum) < 0)
       panic("create dots");
   }
-
   if(dirlink(dp, name, ip->inum) < 0)
     panic("create: dirlink");
 
   iunlockput(dp);
-
   return ip;
 }
 
@@ -291,7 +289,6 @@ sys_open(void)
   struct file *f;
   struct inode *ip;
   int n;
-
   if((n = argstr(0, path, MAXPATH)) < 0 || argint(1, &omode) < 0)
     return -1;
 
@@ -306,18 +303,32 @@ sys_open(void)
   } else {
     if((ip = namei(path)) == 0){
       end_op();
+      // printf("failed1\n");
       return -1;
     }
     ilock(ip);
-    if (!(omode & O_NOFOLLOW)){
+    if ((ip->type==T_SYMLINK)  && !(omode & O_NOFOLLOW)){
       // follow link
-      readi(ip,0,(uint64)path,0,14);
+      readi(ip,0,(uint64)path,0,MAXPATH);
       iunlockput(ip);
-      if((ip = namei(path)) == 0){
+      if ((ip = namei(path))<=0){
         end_op();
+        // printf("%s failed2\n",path);
         return -1;
       }
       ilock(ip);
+      n = 0;
+      while(ip->type == T_SYMLINK){
+        readi(ip,0,(uint64)path,0,MAXPATH);
+        iunlockput(ip);
+        n += 1;
+        if ((ip = namei(path))<=0 || n>10){
+          end_op();
+          // printf("%s failed3\n",path);
+          return -1;
+        }
+        ilock(ip);
+      }
     }
     if(ip->type == T_DIR && omode != O_RDONLY){
       iunlockput(ip);
@@ -503,41 +514,19 @@ sys_symlink(void)
   char src[MAXPATH],dst[MAXPATH];
   int n;
   struct inode *ip;
-  int count = 0; // count for loop
   if( (argstr(0,src,MAXPATH) <0) || (argstr(1,dst,MAXPATH) <0) ){
     return -1;
   }
-  /**
-   * link信息存在addr第一个block里面
-   * 尝试打开src,读取节点信息，递归直到第一个非link节点
-   * 如果不存在，返回-1
-   * 接下来创建一个以dst命名的节点(begin_op(),end_op())
-   */
 
   begin_op();
-  if ((ip = namei(src))<0){
-    end_op();
-    return -1;
-  }
-  ilock(ip);
-  while(ip->type == T_SYMLINK){
-    panic("unimplemented");
-    count += 1;
-    iunlock(ip);
-    // ip = namei()
-    // TODO:
-    if(count>10){
-      end_op(); // out of max loop
-      return -1;
-    }
-  }
-  iunlockput(ip);
-
   // 创建一个新的节点，写入node信息
-  ip = create(dst,T_SYMLINK,0,0);
-  ilock(ip);
+  if ( (ip = create(dst,T_SYMLINK,0,0))==0){
+    panic("symlink:create failed");
+  }
   n = strlen(src);
-  writei(ip,0,(uint64)src,0,n);
+  if (writei(ip,0,(uint64)&src,0,n)!=n){
+    panic("symlink:write");
+  }
   iunlockput(ip);
   end_op();
   return 0; 
