@@ -415,7 +415,11 @@ bmap(struct inode *ip, uint bn)
     bp2 = bread(ip->dev, addr);
     a = (uint*)bp2->data;
     if((addr = a[offset]) == 0){
+      // for(int i=0;i<NINDIRECT;i++){
+      //   a[i] = balloc(ip->dev);
+      // }
       a[offset] = addr = balloc(ip->dev);
+      // addr = a[offset];
       log_write(bp2);
     }
     brelse(bp2);

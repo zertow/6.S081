@@ -154,6 +154,8 @@ bmap(struct inode *ip, uint bn)
 
 
 ## 遇到的问题
+* 没加`log_write`
+* 忘记改`file.h`中`NDIRECT`相关的部分
 
 # Symbolic links
 这个lab搞了2天。主要原因是不熟悉文件系统，还看错了指导书。 
@@ -210,11 +212,114 @@ sys_symlink(void)
 ```
 首先看`[1]`。这里我一开始忘了，设成了文件名最大长度（14），然后`argstr`一直返回负数。  
  
-再看`[2]`。这里创建了一个文件，类型为`T_SYMLINK`。一开始我是用`ialloc`慢慢自己写的，后来发现有现成的，就用它了。不过主要要判断返回值。因为这个返回值，我又检查了4个小时。
+再看`[2]`。这里创建了一个文件，类型为`T_SYMLINK`。一开始我是用`ialloc`慢慢自己写的，后来发现有现成的，就用它了。不过主要要判断返回值。因为这个返回值，我又检查了4个小时。这里返回值是0的情况下，可能是已经存在文件了。但是原版的create里不会判断软链接的类型，因此就会直接返回0.
 
-接下来是`writei`。这里是写入软链接的位置。指导书上建议放在数据块，当然直接存在结构体里面也是可以的。当然代价就是所有inode的结构体都要变长。关于wr TODO:
+接下来是`writei`。这里是写入软链接的位置。指导书上建议放在数据块，当然直接存在结构体里面也是可以的。当然代价就是所有inode的结构体都要变长。
 
 再看`iunlockput`函数。这个函数是两个函数的组合。即`unlock`和`iput`。前者表示对指针解锁，后者表示直接减小一个引用。大部分情况下直接用`iunlockput`。这表示后面不会再用`ip`指针和它内部的数据了。
 
+接下来需要修改`open`。
+```c
+// ....
+if((ip = namei(path)) == 0){
+  end_op();
+  return -1;
+}
+ilock(ip);
+//增加的部分：
+if ((ip->type==T_SYMLINK)  && !(omode & O_NOFOLLOW)){
+  // follow link
+  readi(ip,0,(uint64)path,0,MAXPATH);
+  iunlockput(ip);
+  if ((ip = namei(path))<=0){
+    end_op();
+    // printf("%s failed2\n",path);
+    return -1;
+  }
+  ilock(ip);
+  n = 0;
+  while(ip->type == T_SYMLINK){
+    readi(ip,0,(uint64)path,0,MAXPATH);
+    iunlockput(ip);
+    n += 1;
+    if ((ip = namei(path))<=0 || n>10){
+      end_op();
+      // printf("%s failed3\n",path);
+      return -1;
+    }
+    ilock(ip);
+  }
+}
+// 上面是增加的部分
 
+if(ip->type == T_DIR && omode != O_RDONLY){
+  iunlockput(ip);
+  end_op();
+  return -1;
+}
+// ....
+```
+这里打开文件时，如果是软链接，并且打开模式没有置`O_NOFOLLOW`，那么就顺着链接指的地址去查找文件。如果下一个链接还是软链接，继续向下，直到遇到一个非软链接。如果超过一定的长度，判断为死循环。当然也可以保存一下开头的地址，然后判断下一个地址是不是开头的地址。  
 
+这里主要需要注意的是各种`ilock`、`iunlockput`和`end_op()`
+
+最后要修改的是之前说的`create`函数。
+
+这里就是添加上对`SYMLINK`文件的支持。不添加这个在`concurrent`测试中就会失败。
+```c
+static struct inode*
+create(char *path, short type, short major, short minor)
+{
+  struct inode *ip, *dp;
+  char name[DIRSIZ];
+
+  if((dp = nameiparent(path, name)) == 0)
+    return 0;
+
+  ilock(dp);
+
+  if((ip = dirlookup(dp, name, 0)) != 0){
+    iunlockput(dp);
+    ilock(ip);
+    if((type == T_FILE && (ip->type == T_FILE || ip->type == T_DEVICE)) ||
+       (type == T_SYMLINK && ip->type == T_SYMLINK))
+       // 修改
+      return ip;
+    iunlockput(ip);
+    return 0;
+  }
+
+  if((ip = ialloc(dp->dev, type)) == 0)
+    panic("create: ialloc");
+
+  ilock(ip);
+  ip->major = major;
+  ip->minor = minor;
+  ip->nlink = 1;
+  iupdate(ip);
+
+  if(type == T_DIR){  // Create . and .. entries.
+    dp->nlink++;  // for ".."
+    iupdate(dp);
+    // No ip->nlink++ for ".": avoid cyclic ref count.
+    if(dirlink(ip, ".", ip->inum) < 0 || dirlink(ip, "..", dp->inum) < 0)
+      panic("create dots");
+  }
+  if(dirlink(dp, name, ip->inum) < 0)
+    panic("create: dirlink");
+
+  iunlockput(dp);
+  return ip;
+}
+```
+
+## 遇到的问题
+* 一开始没理解API，不太清楚文件系统的结构，不知道怎么获取文件名。
+* 看错了。以为建立软链接的时候要检查文件。
+* 误解了`unlink`的意思。这其实是删除一个文件的意思。
+* `iunlockput`的意思没理解
+* `sys_symlink`字符数组开小了
+* 没有检查`create`的返回值，导致出现了kernel trap
+
+## 其他
+这里其实没有做对ls的支持，如果对有软链接的文件做`ls`，会出现cannot stat的问题，或者直接显示链接文件的数据。这里以后可以改改。
