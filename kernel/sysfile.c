@@ -486,9 +486,29 @@ sys_pipe(void)
 }
 
 
+/**
+ * void *mmap(void *addr, unsigned length, int prot, int flags,
+ *          int fd, unsigned offset);
+ * 
+ * 
+ */
+
 uint64 
 sys_mmap(void){
-  return -1;
+  unsigned length;
+  int prot,flags;
+  struct file* f;
+  struct proc_t *proc;
+
+  //ignore addr and offset
+  if ( argint(1,&length) < 0 || argint(2,&prot) < 0 ||
+       argint(3,&flags)  < 0 || argfd(4,0,&f) <  0){
+         return -1; // parameter error
+  }
+  proc = myproc();
+  
+  // 找一个可用的地址； 不考虑内存碎片，会一直向上分配
+  return allocate_mmap(length,prot,flags,f);
 }
 uint64 
 sys_munmap(void){
